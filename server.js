@@ -155,34 +155,55 @@ app.get('/api/test', async (req, res) => {
   }
 });
 
-// server.js - Ajoutez ces routes OAuth
-
+// server.js - Configuration OAuth corrigée
 const REVOLUT_CONFIG = {
   clientId: process.env.REVOLUT_CLIENT_ID,
   clientSecret: process.env.REVOLUT_CLIENT_SECRET,
-  redirectUri: 'https://rev-backend-rho.vercel.app/auth/callback',
+  redirectUri: process.env.REVOLUT_REDIRECT_URI || 'https://rev-backend-rho.vercel.app/auth/callback',
   sandbox: true
 };
 
-// Route pour initier le flux OAuth
+// Ajoutez cette validation au démarrage
+console.log('🔧 Configuration OAuth:', {
+  clientId: REVOLUT_CONFIG.clientId ? '✅ Défini' : '❌ Manquant',
+  clientSecret: REVOLUT_CONFIG.clientSecret ? '✅ Défini' : '❌ Manquant',
+  redirectUri: REVOLUT_CONFIG.redirectUri
+});
+
+// Route pour initier le flux OAuth - CORRIGÉE
 app.get('/auth/revolut', (req, res) => {
+  if (!REVOLUT_CONFIG.clientId || !REVOLUT_CONFIG.clientSecret) {
+    return res.status(500).json({ 
+      error: 'Configuration OAuth manquante',
+      details: 'Vérifiez REVOLUT_CLIENT_ID et REVOLUT_CLIENT_SECRET' 
+    });
+  }
+
   const authUrl = `https://sandbox-business.revolut.com/app-confirm?` +
-    `client_id=${process.env.REVOLUT_CLIENT_ID}` +
-    `&redirect_uri=${encodeURIComponent(process.env.REVOLUT_REDIRECT_URI)}` +
+    `client_id=${REVOLUT_CONFIG.clientId}` +
+    `&redirect_uri=${encodeURIComponent(REVOLUT_CONFIG.redirectUri)}` +
     `&response_type=code`;
   
+  console.log('🔗 Redirection OAuth vers:', authUrl);
   res.redirect(authUrl);
 });
 
-// Callback OAuth
+// Callback OAuth - CORRIGÉ
 app.get('/auth/callback', async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, error, error_description } = req.query;
+    
+    if (error) {
+      console.error('❌ Erreur OAuth callback:', error, error_description);
+      return res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(error_description || error)}`);
+    }
     
     if (!code) {
-      return res.status(400).json({ error: 'Code authorization manquant' });
+      return res.status(400).redirect('https://revolut-tau.vercel.app/auth/error?message=Code authorization manquant');
     }
 
+    console.log('🔄 Échange du code contre token...');
+    
     // Échanger le code contre un token d'accès
     const tokenResponse = await axios.post(
       'https://sandbox-b2b.revolut.com/api/1.0/auth/token',
@@ -196,18 +217,30 @@ app.get('/auth/callback', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
-        }
+        },
+        timeout: 10000
       }
     );
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
     
-    // Rediriger vers le frontend Vercel avec le token
+    console.log('✅ Token OAuth obtenu avec succès');
+    
+    // Rediriger vers le frontend avec le token
     res.redirect(`https://revolut-tau.vercel.app/auth/success?access_token=${access_token}`);
     
   } catch (error) {
-    console.error('OAuth Error:', error.response?.data || error.message);
-    res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(error.response?.data?.message || 'Erreur authentication')}`);
+    console.error('❌ OAuth Error:', {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message
+    });
+    
+    const errorMessage = error.response?.data?.error_description || 
+                        error.response?.data?.error || 
+                        error.message;
+    
+    res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(errorMessage)}`);
   }
 });
 
