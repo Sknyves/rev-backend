@@ -6,7 +6,7 @@ const app = express();
 
 // Middleware CORS pour autoriser les requêtes depuis Vue.js
 app.use(cors({
-  origin: 'http://localhost:5173', // URL de ton frontend Vue.js
+  origin: 'https://revolut-tau.vercel.app', // URL de ton frontend Vue.js
   credentials: true
 }));
 
@@ -160,7 +160,7 @@ app.get('/api/test', async (req, res) => {
 const REVOLUT_CONFIG = {
   clientId: process.env.REVOLUT_CLIENT_ID,
   clientSecret: process.env.REVOLUT_CLIENT_SECRET,
-  redirectUri: 'http://localhost:3001/auth/callback',
+  redirectUri: 'https://rev-backend-rho.vercel.app/auth/callback',
   sandbox: true
 };
 
