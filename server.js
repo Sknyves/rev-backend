@@ -202,12 +202,12 @@ app.get('/auth/callback', async (req, res) => {
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
     
-    // Rediriger vers le frontend avec le token
-    res.redirect(`http://localhost:5173/auth/success?access_token=${access_token}`);
+    // Rediriger vers le frontend Vercel avec le token
+    res.redirect(`https://revolut-tau.vercel.app/auth/success?access_token=${access_token}`);
     
   } catch (error) {
     console.error('OAuth Error:', error.response?.data || error.message);
-    res.redirect(`http://localhost:5173/auth/error?message=${encodeURIComponent(error.response?.data?.message || 'Erreur authentication')}`);
+    res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(error.response?.data?.message || 'Erreur authentication')}`);
   }
 });
 
