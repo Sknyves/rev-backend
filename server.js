@@ -167,8 +167,8 @@ const REVOLUT_CONFIG = {
 // Route pour initier le flux OAuth
 app.get('/auth/revolut', (req, res) => {
   const authUrl = `https://sandbox-business.revolut.com/app-confirm?` +
-    `client_id=${REVOLUT_CONFIG.clientId}` +
-    `&redirect_uri=${encodeURIComponent(REVOLUT_CONFIG.redirectUri)}` +
+    `client_id=${process.env.REVOLUT_CLIENT_ID}` +
+    `&redirect_uri=${encodeURIComponent(process.env.REVOLUT_REDIRECT_URI)}` +
     `&response_type=code`;
   
   res.redirect(authUrl);
@@ -209,6 +209,15 @@ app.get('/auth/callback', async (req, res) => {
     console.error('OAuth Error:', error.response?.data || error.message);
     res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(error.response?.data?.message || 'Erreur authentication')}`);
   }
+});
+
+// Route pour fournir la configuration OAuth au frontend
+app.get('/api/oauth-config', (req, res) => {
+  res.json({
+    clientId: process.env.REVOLUT_CLIENT_ID,
+    authUrl: `https://sandbox-business.revolut.com/app-confirm`,
+    redirectUri: process.env.REVOLUT_REDIRECT_URI
+  });
 });
 
 // Route pour rafraîchir le token
