@@ -204,10 +204,8 @@ app.get('/auth/callback', checkConfig, async (req, res) => {
     const { code, error, error_description } = req.query;
     
     console.log('🔄 Callback OAuth, code présent:', !!code);
-    console.log('📋 Code reçu:', code?.substring(0, 20) + '...');
 
     if (error) {
-      console.error('❌ Erreur OAuth:', error_description || error);
       return res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(error_description || error)}`);
     }
     
@@ -215,12 +213,13 @@ app.get('/auth/callback', checkConfig, async (req, res) => {
       return res.redirect('https://revolut-tau.vercel.app/auth/error?message=Code manquant');
     }
 
-    // Générer le JWT avec plus de détails
+    // Générer le JWT
     const clientAssertion = generateClientAssertion();
-    console.log('🔐 JWT généré (premieres 50 chars):', clientAssertion.substring(0, 50) + '...');
-
-    // Préparer la requête token avec logging
-    const tokenData = new URLSearchParams({
+    
+    console.log('🔄 Échange code contre token...');
+    
+    // DEBUG: Afficher tous les paramètres
+    const tokenParams = new URLSearchParams({
       grant_type: 'authorization_code',
       code: code,
       client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
@@ -228,27 +227,22 @@ app.get('/auth/callback', checkConfig, async (req, res) => {
       redirect_uri: REVOLUT_CONFIG.redirectUri
     });
 
-    console.log('📤 Requête token vers Revolut:');
-    console.log('   URL: https://sandbox-b2b.revolut.com/api/1.0/auth/token');
-    console.log('   grant_type: authorization_code');
-    console.log('   code:', code.substring(0, 10) + '...');
-    console.log('   redirect_uri:', REVOLUT_CONFIG.redirectUri);
-    console.log('   client_assertion_type: jwt-bearer');
-    console.log('   client_assertion_length:', clientAssertion.length);
+    console.log('🔍 Paramètres de la requête:');
+    console.log('   - grant_type: authorization_code');
+    console.log('   - code:', code.substring(0, 10) + '...');
+    console.log('   - client_assertion_type: jwt-bearer');
+    console.log('   - redirect_uri:', REVOLUT_CONFIG.redirectUri);
+    console.log('   - client_assertion_length:', clientAssertion.length);
     
     const tokenResponse = await axios.post(
       'https://sandbox-b2b.revolut.com/api/1.0/auth/token',
-      tokenData,
+      tokenParams,
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Revolut-API-Client/1.0'
         },
-        timeout: 15000,
-        // Ajouter le logging des requêtes
-        transformRequest: [(data) => {
-          console.log('📨 Données envoyées:', data.toString().substring(0, 200) + '...');
-          return data;
-        }]
+        timeout: 15000
       }
     );
 
@@ -265,20 +259,20 @@ app.get('/auth/callback', checkConfig, async (req, res) => {
     res.redirect(redirectUrl.toString());
     
   } catch (error) {
-    console.error('❌ Erreur détaillée callback:');
+    console.error('❌ Erreur détaillée:');
     console.error('   Status:', error.response?.status);
-    console.error('   Status Text:', error.response?.statusText);
-    console.error('   Headers:', error.response?.headers);
     console.error('   Data:', error.response?.data);
-    console.error('   Message:', error.message);
+    console.error('   Headers:', error.response?.headers);
     
-    let errorMessage = 'Erreur authentification';
-    
+    // Log supplémentaire pour diagnostic
     if (error.response?.data) {
-      errorMessage = error.response.data.error_description || 
-                    error.response.data.error || 
-                    JSON.stringify(error.response.data);
+      console.error('   Error:', error.response.data.error);
+      console.error('   Error Description:', error.response.data.error_description);
     }
+    
+    const errorMessage = error.response?.data?.error_description || 
+                        error.response?.data?.error || 
+                        'Erreur authentification Revolut';
     
     res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(errorMessage)}`);
   }
