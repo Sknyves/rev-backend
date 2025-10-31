@@ -278,6 +278,414 @@ app.get('/auth/callback', checkConfig, async (req, res) => {
   }
 });
 
+// =============================================
+// ROUTES PRINCIPALES REVOLUT BUSINESS API
+// =============================================
+
+// Middleware pour vérifier le token
+const requireAuth = async (req, res, next) => {
+  try {
+    const accessToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Token d\'accès requis' });
+    }
+
+    // Optionnel: Vérifier que le token est valide en faisant une requête test
+    req.accessToken = accessToken;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Token invalide' });
+  }
+};
+
+// =============================================
+// COMPTES ET SOLDES
+// =============================================
+
+// 1. Récupérer tous les comptes
+app.get('/api/accounts', requireAuth, async (req, res) => {
+  try {
+    const response = await axios.get('https://sandbox-b2b.revolut.com/api/1.0/accounts', {
+      headers: {
+        'Authorization': `Bearer ${req.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log(`✅ ${response.data.length} comptes récupérés`);
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur comptes:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 2. Récupérer un compte spécifique
+app.get('/api/accounts/:accountId', requireAuth, async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    
+    const response = await axios.get(`https://sandbox-b2b.revolut.com/api/1.0/accounts/${accountId}`, {
+      headers: {
+        'Authorization': `Bearer ${req.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur compte spécifique:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 3. Récupérer le solde d'un compte
+app.get('/api/accounts/:accountId/balance', requireAuth, async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    
+    const response = await axios.get(`https://sandbox-b2b.revolut.com/api/1.0/accounts/${accountId}`, {
+      headers: {
+        'Authorization': `Bearer ${req.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json({
+      account_id: accountId,
+      balance: response.data.balance,
+      currency: response.data.currency,
+      available_balance: response.data.available_balance || response.data.balance
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur solde:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// =============================================
+// TRANSACTIONS
+// =============================================
+
+// 4. Récupérer les transactions d'un compte
+app.get('/api/accounts/:accountId/transactions', requireAuth, async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    const { from, to, limit, type } = req.query;
+    
+    const params = new URLSearchParams();
+    if (from) params.append('from', from);
+    if (to) params.append('to', to);
+    if (limit) params.append('limit', limit);
+    if (type) params.append('type', type);
+    
+    const response = await axios.get(
+      `https://sandbox-b2b.revolut.com/api/1.0/accounts/${accountId}/transactions?${params}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ ${response.data.length} transactions récupérées`);
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur transactions:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 5. Récupérer une transaction spécifique
+app.get('/api/transactions/:transactionId', requireAuth, async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    
+    const response = await axios.get(
+      `https://sandbox-b2b.revolut.com/api/1.0/transaction/${transactionId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur transaction:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// =============================================
+// CONTACTS (COUNTERPARTIES)
+// =============================================
+
+// 6. Récupérer tous les contacts
+app.get('/api/counterparties', requireAuth, async (req, res) => {
+  try {
+    const response = await axios.get('https://sandbox-b2b.revolut.com/api/1.0/counterparties', {
+      headers: {
+        'Authorization': `Bearer ${req.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log(`✅ ${response.data.length} contacts récupérés`);
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur contacts:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 7. Ajouter un nouveau contact
+app.post('/api/counterparties', requireAuth, async (req, res) => {
+  try {
+    const { profile_type, name, email, phone, bank_country, currency, account_no, sort_code, iban, bic } = req.body;
+    
+    const counterpartyData = {
+      profile_type: profile_type || 'business',
+      name,
+      email,
+      phone,
+      bank_country,
+      currency,
+      account_no,
+      sort_code,
+      iban,
+      bic
+    };
+    
+    const response = await axios.post(
+      'https://sandbox-b2b.revolut.com/api/1.0/counterparties',
+      counterpartyData,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log('✅ Contact ajouté:', response.data.id);
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur ajout contact:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 8. Supprimer un contact
+app.delete('/api/counterparties/:counterpartyId', requireAuth, async (req, res) => {
+  try {
+    const { counterpartyId } = req.params;
+    
+    await axios.delete(
+      `https://sandbox-b2b.revolut.com/api/1.0/counterparties/${counterpartyId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log('✅ Contact supprimé:', counterpartyId);
+    res.json({ success: true, message: 'Contact supprimé' });
+    
+  } catch (error) {
+    console.error('❌ Erreur suppression contact:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// =============================================
+// TRANSFERTS
+// =============================================
+
+// 9. Effectuer un transfert
+app.post('/api/transfers', requireAuth, async (req, res) => {
+  try {
+    const { request_id, source_account_id, target_account_id, amount, currency, reference } = req.body;
+    
+    const transferData = {
+      request_id: request_id || `req_${Date.now()}`,
+      source_account_id,
+      target_account_id,
+      amount: parseFloat(amount),
+      currency,
+      reference: reference || 'Transfert via API'
+    };
+    
+    const response = await axios.post(
+      'https://sandbox-b2b.revolut.com/api/1.0/transfer',
+      transferData,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log('✅ Transfert effectué:', response.data.id);
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur transfert:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 10. Récupérer l'état d'un transfert
+app.get('/api/transfers/:transactionId', requireAuth, async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    
+    const response = await axios.get(
+      `https://sandbox-b2b.revolut.com/api/1.0/transaction/${transactionId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur état transfert:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// =============================================
+// TAUX DE CHANGE
+// =============================================
+
+// 11. Récupérer les taux de change
+app.get('/api/rates', requireAuth, async (req, res) => {
+  try {
+    const { pair } = req.query; // Format: EURGBP, USDGBP, etc.
+    
+    const url = pair 
+      ? `https://sandbox-b2b.revolut.com/api/1.0/rate/${pair}`
+      : 'https://sandbox-b2b.revolut.com/api/1.0/rate';
+    
+    const response = await axios.get(url, {
+      headers: {
+        'Authorization': `Bearer ${req.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur taux change:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// 12. Convertir une devise
+app.post('/api/convert', requireAuth, async (req, res) => {
+  try {
+    const { from, to, amount } = req.body;
+    
+    // D'abord récupérer le taux
+    const rateResponse = await axios.get(
+      `https://sandbox-b2b.revolut.com/api/1.0/rate/${from}${to}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${req.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    const rate = rateResponse.data.rate;
+    const convertedAmount = amount * rate;
+    
+    res.json({
+      from_currency: from,
+      to_currency: to,
+      from_amount: amount,
+      to_amount: convertedAmount,
+      rate: rate,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur conversion:', error.response?.data || error.message);
+    handleRevolutError(error, res);
+  }
+});
+
+// =============================================
+// UTILITAIRES
+// =============================================
+
+// Gestionnaire d'erreurs Revolut
+function handleRevolutError(error, res) {
+  if (error.response?.status === 401) {
+    res.status(401).json({ error: 'Token d\'accès invalide ou expiré' });
+  } else if (error.response?.status === 400) {
+    res.status(400).json({ 
+      error: 'Requête invalide',
+      details: error.response.data 
+    });
+  } else if (error.response?.status === 404) {
+    res.status(404).json({ error: 'Ressource non trouvée' });
+  } else if (error.response?.status === 429) {
+    res.status(429).json({ error: 'Limite de requêtes dépassée' });
+  } else {
+    res.status(500).json({ 
+      error: 'Erreur serveur Revolut',
+      details: error.response?.data || error.message 
+    });
+  }
+}
+
+// Route de statut API
+app.get('/api/status', requireAuth, async (req, res) => {
+  try {
+    // Tester plusieurs endpoints pour vérifier la connectivité
+    const [accountsRes, counterpartiesRes] = await Promise.all([
+      axios.get('https://sandbox-b2b.revolut.com/api/1.0/accounts', {
+        headers: { 'Authorization': `Bearer ${req.accessToken}` }
+      }).catch(() => ({ data: [] })),
+      axios.get('https://sandbox-b2b.revolut.com/api/1.0/counterparties', {
+        headers: { 'Authorization': `Bearer ${req.accessToken}` }
+      }).catch(() => ({ data: [] }))
+    ]);
+    
+    res.json({
+      status: 'connected',
+      accounts_count: accountsRes.data.length,
+      counterparties_count: counterpartiesRes.data.length,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'error',
+      error: error.message 
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Backend démarré sur le port ${PORT}`);
