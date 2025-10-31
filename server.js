@@ -1,10 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// Middleware CORS
 app.use(cors({
   origin: 'https://revolut-tau.vercel.app',
   credentials: true
@@ -12,27 +12,26 @@ app.use(cors({
 
 app.use(express.json());
 
-// Configuration avec validation améliorée
+// Configuration Revolut
 const REVOLUT_CONFIG = {
   clientId: process.env.REVOLUT_CLIENT_ID,
-  clientSecret: process.env.REVOLUT_CLIENT_SECRET,
-  redirectUri: process.env.REVOLUT_REDIRECT_URI || 'https://rev-backend-rho.vercel.app/auth/callback',
-  sandbox: true
+  privateKey: process.env.REVOLUT_PRIVATE_KEY?.replace(/\\n/g, '\n'), // Important pour le format
+  redirectUri: process.env.REVOLUT_REDIRECT_URI || 'https://rev-backend-rho.vercel.app/auth/callback'
 };
 
-// Validation au démarrage
-console.log('🔧 Configuration OAuth:', {
+// Vérification au démarrage
+console.log('🔧 Configuration Revolut:', {
   clientId: REVOLUT_CONFIG.clientId ? '✅ Défini' : '❌ Manquant',
-  clientSecret: REVOLUT_CONFIG.clientSecret ? '✅ Défini' : '❌ Manquant',
+  privateKey: REVOLUT_CONFIG.privateKey ? '✅ Défini' : '❌ Manquant',
   redirectUri: REVOLUT_CONFIG.redirectUri
 });
 
-// Middleware pour vérifier la configuration OAuth
-const checkOAuthConfig = (req, res, next) => {
-  if (!REVOLUT_CONFIG.clientId || !REVOLUT_CONFIG.clientSecret) {
+// Middleware de vérification config
+const checkConfig = (req, res, next) => {
+  if (!REVOLUT_CONFIG.clientId || !REVOLUT_CONFIG.privateKey) {
     return res.status(500).json({
-      error: 'Configuration OAuth incomplète',
-      details: 'Les variables REVOLUT_CLIENT_ID et REVOLUT_CLIENT_SECRET doivent être définies'
+      error: 'Configuration Revolut incomplète',
+      details: 'Vérifiez REVOLUT_CLIENT_ID et REVOLUT_PRIVATE_KEY'
     });
   }
   next();
@@ -40,78 +39,98 @@ const checkOAuthConfig = (req, res, next) => {
 
 // Route santé
 app.get('/health', (req, res) => {
-  const oauthConfigured = !!(REVOLUT_CONFIG.clientId && REVOLUT_CONFIG.clientSecret);
   res.json({ 
     status: 'OK', 
-    oauth_configured: oauthConfigured,
-    message: 'Backend proxy Revolut opérationnel' 
+    oauth_configured: !!(REVOLUT_CONFIG.clientId && REVOLUT_CONFIG.privateKey),
+    timestamp: new Date().toISOString()
   });
 });
 
-// Route pour initier le flux OAuth - CORRIGÉE
-app.get('/auth/revolut', checkOAuthConfig, (req, res) => {
+// Génération du JWT client assertion
+function generateClientAssertion() {
+  const payload = {
+    iss: 'https://rev-backend-rho.vercel.app', // Doit matcher le domaine de redirect_uri
+    sub: REVOLUT_CONFIG.clientId,
+    aud: 'https://revolut.com',
+    exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
+    iat: Math.floor(Date.now() / 1000)
+  };
+
+  console.log('📝 Génération JWT avec iss:', payload.iss);
+
+  return jwt.sign(payload, REVOLUT_CONFIG.privateKey, { 
+    algorithm: 'RS256'
+  });
+}
+
+// 1. Initier le flux OAuth
+app.get('/auth/revolut', checkConfig, (req, res) => {
   const authParams = new URLSearchParams({
     client_id: REVOLUT_CONFIG.clientId,
     redirect_uri: REVOLUT_CONFIG.redirectUri,
-    response_type: 'code',
-    scope: 'read:account read:transaction read:counterparty' // Ajoutez les scopes nécessaires
+    response_type: 'code'
   });
 
   const authUrl = `https://sandbox-business.revolut.com/app-confirm?${authParams.toString()}`;
   
-  console.log('🔗 Redirection OAuth vers:', authUrl);
+  console.log('🔗 Redirection OAuth vers Revolut');
   res.redirect(authUrl);
 });
 
-// Callback OAuth - CORRIGÉ
-app.get('/auth/callback', checkOAuthConfig, async (req, res) => {
+// 2. Callback OAuth - Échange code contre token
+app.get('/auth/callback', checkConfig, async (req, res) => {
   try {
     const { code, error, error_description } = req.query;
     
+    console.log('🔄 Callback OAuth reçu, code présent:', !!code);
+
     if (error) {
-      console.error('❌ Erreur OAuth callback:', error, error_description);
+      console.error('❌ Erreur OAuth:', error_description || error);
       return res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(error_description || error)}`);
     }
     
     if (!code) {
-      return res.redirect('https://revolut-tau.vercel.app/auth/error?message=Code authorization manquant');
+      return res.redirect('https://revolut-tau.vercel.app/auth/error?message=Code d\'autorisation manquant');
     }
 
+    // Générer le JWT
+    const clientAssertion = generateClientAssertion();
+    
     console.log('🔄 Échange du code contre token...');
     
-    // Échanger le code contre un token d'accès
+    // Échanger code contre token d'accès
     const tokenResponse = await axios.post(
       'https://sandbox-b2b.revolut.com/api/1.0/auth/token',
       new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: REVOLUT_CONFIG.clientId,
-        client_secret: REVOLUT_CONFIG.clientSecret,
         code: code,
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: clientAssertion,
         redirect_uri: REVOLUT_CONFIG.redirectUri
       }),
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        timeout: 10000
+        timeout: 15000
       }
     );
 
     const { access_token, refresh_token, expires_in, token_type } = tokenResponse.data;
     
-    console.log('✅ Token OAuth obtenu avec succès');
+    console.log('✅ Token obtenu - Expire dans:', expires_in, 'secondes');
     
-    // Rediriger vers le frontend avec le token
+    // Redirection vers le frontend
     const redirectUrl = new URL('https://revolut-tau.vercel.app/auth/success');
     redirectUrl.searchParams.set('access_token', access_token);
-    redirectUrl.searchParams.set('refresh_token', refresh_token);
+    if (refresh_token) redirectUrl.searchParams.set('refresh_token', refresh_token);
     redirectUrl.searchParams.set('expires_in', expires_in);
     redirectUrl.searchParams.set('token_type', token_type);
     
     res.redirect(redirectUrl.toString());
     
   } catch (error) {
-    console.error('❌ OAuth Error:', {
+    console.error('❌ Erreur callback OAuth:', {
       status: error.response?.status,
       data: error.response?.data,
       message: error.message
@@ -119,62 +138,96 @@ app.get('/auth/callback', checkOAuthConfig, async (req, res) => {
     
     const errorMessage = error.response?.data?.error_description || 
                         error.response?.data?.error || 
-                        error.message;
+                        'Erreur d\'authentification';
     
     res.redirect(`https://revolut-tau.vercel.app/auth/error?message=${encodeURIComponent(errorMessage)}`);
   }
 });
 
-// Route proxy pour les comptes
-app.get('/api/accounts', async (req, res) => {
+// 3. Rafraîchir le token
+app.post('/auth/refresh', checkConfig, async (req, res) => {
   try {
-    const apiKey = req.headers.authorization?.replace('Bearer ', '');
+    const { refresh_token } = req.body;
     
-    if (!apiKey) {
-      return res.status(401).json({ error: 'Clé API manquante' });
+    if (!refresh_token) {
+      return res.status(400).json({ error: 'Refresh token requis' });
     }
 
-    console.log('🔐 Tentative de connexion à Revolut Sandbox...');
+    const clientAssertion = generateClientAssertion();
     
+    const tokenResponse = await axios.post(
+      'https://sandbox-b2b.revolut.com/api/1.0/auth/token',
+      new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refresh_token,
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: clientAssertion
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    console.log('✅ Token rafraîchi');
+    res.json(tokenResponse.data);
+    
+  } catch (error) {
+    console.error('❌ Erreur refresh:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: 'Erreur rafraîchissement token',
+      details: error.response?.data || error.message 
+    });
+  }
+});
+
+// 4. Récupérer les comptes
+app.get('/api/accounts', async (req, res) => {
+  try {
+    const accessToken = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Token d\'accès requis' });
+    }
+
     const response = await axios.get('https://sandbox-b2b.revolut.com/api/1.0/accounts', {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
       timeout: 10000
     });
     
-    console.log('✅ Comptes récupérés avec succès');
+    console.log('✅ Comptes récupérés:', response.data.length);
     res.json(response.data);
     
   } catch (error) {
-    console.error('❌ Erreur récupération comptes:', error.response?.data || error.message);
+    console.error('❌ Erreur comptes:', error.response?.status, error.response?.data?.error);
     
     if (error.response?.status === 401) {
-      res.status(401).json({ error: 'Clé API invalide' });
+      res.status(401).json({ error: 'Token invalide ou expiré' });
     } else {
       res.status(500).json({ 
-        error: 'Erreur lors de la récupération des comptes',
+        error: 'Erreur récupération comptes',
         details: error.response?.data || error.message 
       });
     }
   }
 });
 
-// Route pour fournir la configuration OAuth au frontend
+// 5. Configuration OAuth pour le frontend
 app.get('/api/oauth-config', (req, res) => {
-  const config = {
+  res.json({
     clientId: REVOLUT_CONFIG.clientId,
     authUrl: `https://sandbox-business.revolut.com/app-confirm`,
     redirectUri: REVOLUT_CONFIG.redirectUri,
-    isConfigured: !!(REVOLUT_CONFIG.clientId && REVOLUT_CONFIG.clientSecret)
-  };
-  
-  res.json(config);
+    isConfigured: !!(REVOLUT_CONFIG.clientId && REVOLUT_CONFIG.privateKey)
+  });
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Backend proxy Revolut démarré sur le port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/health`);
+  console.log(`🚀 Backend Revolut démarré sur le port ${PORT}`);
+  console.log(`📍 Health: http://localhost:${PORT}/health`);
 });
